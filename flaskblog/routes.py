@@ -1,7 +1,10 @@
+from os import path
+from secrets import token_hex
+from PIL import Image
 from flask import render_template, url_for, flash, redirect, request
 from flaskblog import app, db, bcrypt
 from flaskblog.models import User, Post
-from flaskblog.forms import RegistrationForm, LoginForm
+from flaskblog.forms import RegistrationForm, LoginForm, UpdateAccountForm
 from flask_login import login_user, current_user, logout_user, login_required
 
 posts = [
@@ -62,6 +65,7 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data).first()
         if user and bcrypt.check_password_hash(user.password, form.password.data):
+            flash("Login successful!", category="success")
             login_user(user, remember=form.remember_details.data)
             next_page = request.args.get("next")
             return redirect(next_page) if next_page else redirect(url_for("home"))
@@ -76,10 +80,41 @@ def login():
 @app.route("/logout")
 def logout():
     logout_user()
+    flash("You have been logged out!", category="success")
     return redirect(url_for("home"))
 
 
-@app.route("/account")
+def save_avatar(form_avatar):
+    random_hex = token_hex(8)
+    _, extension = path.splitext(form_avatar.filename)
+    random_filename = random_hex + extension
+    avatar_path = path.join(app.root_path, "static/profile_pics", random_filename)
+
+    output_size = (125, 125)
+    new_avatar = Image.open(form_avatar)
+    new_avatar.thumbnail(output_size)
+    new_avatar.save(avatar_path)
+
+    return random_filename
+
+
+@app.route("/account", methods=["GET", "POST"])
 @login_required
 def account():
-    return render_template("account.html", title="Account")
+    form = UpdateAccountForm()
+    if form.validate_on_submit():
+        if form.avatar.data:
+            avatar_filename = save_avatar(form.avatar.data)
+            current_user.avatar_file = avatar_filename
+        current_user.username = form.username.data
+        current_user.email = form.email.data
+        db.session.commit()
+        flash("Your account has been updated!", category="success")
+        return redirect(url_for("account"))
+    elif request.method == "GET":
+        form.username.data = current_user.username
+        form.email.data = current_user.email
+    image_file = url_for("static", filename=f"profile_pics/{current_user.avatar_file}")
+    return render_template(
+        "account.html", title="Account", image_file=image_file, form=form
+    )
